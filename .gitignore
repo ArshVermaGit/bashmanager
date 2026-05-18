@@ -22,3 +22,4 @@ devshell/
 *.dat
 *.pak
 *.so
+logs/
