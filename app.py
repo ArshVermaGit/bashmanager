@@ -505,6 +505,12 @@ def check_lock(rel_path, provided_pass):
             return False
     return True
 
+def is_safe_path(base_dir, target_path):
+    base_dir = os.path.abspath(base_dir)
+    target_path = os.path.abspath(target_path)
+
+    return os.path.commonpath([base_dir, target_path]) == base_dir
+
 
 def parse_script_metadata(filepath):
     """Parse metadata from script comment headers."""
@@ -835,7 +841,7 @@ def get_script_content():
     full_path = os.path.normpath(full_path)
 
     # Security check
-    if not full_path.startswith(os.path.normpath(SCRIPTS_DIR)):
+    if not is_safe_path(SCRIPTS_DIR, full_path):
         return jsonify({'error': 'Invalid path'}), 403
 
     if not os.path.exists(full_path):
@@ -966,7 +972,7 @@ def run_script():
     full_path = os.path.normpath(full_path)
 
     # Security check
-    if not full_path.startswith(os.path.normpath(SCRIPTS_DIR)):
+    if not is_safe_path(SCRIPTS_DIR, full_path):
         return jsonify({'error': 'Invalid path'}), 403
 
     if not os.path.exists(full_path):
@@ -1300,7 +1306,7 @@ def delete_script():
     full_path = os.path.join(SCRIPTS_DIR, rel_path)
     full_path = os.path.normpath(full_path)
 
-    if not full_path.startswith(os.path.normpath(SCRIPTS_DIR)):
+    if not is_safe_path(SCRIPTS_DIR, full_path):
         return jsonify({'error': 'Invalid path'}), 403
 
     if os.path.exists(full_path):
@@ -1483,7 +1489,7 @@ def raise_pr():
     full_path = os.path.normpath(full_path)
 
     # Security check: prevent path traversal outside scripts directory
-    if not full_path.startswith(os.path.normpath(SCRIPTS_DIR)):
+    if not is_safe_path(SCRIPTS_DIR, full_path):
         return jsonify({'error': 'Invalid path'}), 403
 
     try:
