@@ -36,6 +36,7 @@ let state = {
     terminals: [1],      // list of terminal IDs
     activeTerminalId: 1,
     nextTerminalId: 2,
+    autoScroll: {},      // per-terminal auto-scroll toggle: { termId: bool }
 };
 
 // ─── SVG Icons ─────────────────────────────────────────────
@@ -65,6 +66,9 @@ document.addEventListener('DOMContentLoaded', () => {
     loadScripts();
     bindEvents();
     initResizers();
+
+    // Initialize auto-scroll as enabled for terminal 1
+    state.autoScroll[1] = true;
 
     // Replace the execute icon inside the CLI input bar to a more standard 'Enter' icon
     const runCmdBtn = document.getElementById('btn-run-cmd');
@@ -686,7 +690,11 @@ function appendToCli(text, className = '', termId = state.activeTerminalId) {
     line.textContent = text;
     termBody.appendChild(line);
 
-    termBody.scrollTop = termBody.scrollHeight;
+    // Only auto-scroll if enabled for this terminal (default: true)
+    if (state.autoScroll[termId] !== false) {
+        termBody.scrollTop = termBody.scrollHeight;
+    }
+
     highlightTerminalSearch();
 }
 
@@ -700,11 +708,112 @@ function clearCli() {
     document.getElementById('resource-panel').style.display = 'none';
 }
 
+// ─── Terminal Utility Actions ───────────────────────────────
+
+/**
+ * Extracts plain-text content from the active terminal body,
+ * collecting text from each output block line by line.
+ */
+function getTerminalText(termId = state.activeTerminalId) {
+    const termBody = document.getElementById(`terminal-body-${termId}`) || document.getElementById('terminal-body');
+    if (!termBody) return '';
+    const lines = termBody.querySelectorAll('.cli-output-block');
+    return Array.from(lines).map(el => el.textContent).join('\n');
+}
+
+/**
+ * Copies the active terminal's output to the system clipboard.
+ * Falls back to a textarea-based copy for older browsers.
+ */
+function copyTerminalOutput() {
+    const text = getTerminalText();
+    if (!text.trim()) {
+        notify('Terminal is empty — nothing to copy.', 'warning');
+        return;
+    }
+
+    if (navigator.clipboard && window.isSecureContext) {
+        navigator.clipboard.writeText(text).then(() => {
+            notify('Terminal output copied to clipboard.', 'success');
+        }).catch(() => {
+            _fallbackCopy(text);
+        });
+    } else {
+        _fallbackCopy(text);
+    }
+}
+
+function _fallbackCopy(text) {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.style.cssText = 'position:fixed;top:-9999px;left:-9999px;opacity:0;';
+    document.body.appendChild(ta);
+    ta.select();
+    try {
+        document.execCommand('copy');
+        notify('Terminal output copied to clipboard.', 'success');
+    } catch {
+        notify('Copy failed — please copy manually.', 'error');
+    }
+    document.body.removeChild(ta);
+}
+
+/**
+ * Downloads the active terminal's output as a .txt file.
+ * Filename includes the terminal ID and a timestamp for uniqueness.
+ */
+function downloadTerminalLog() {
+    const termId = state.activeTerminalId;
+    const text = getTerminalText(termId);
+    if (!text.trim()) {
+        notify('Terminal is empty — nothing to download.', 'warning');
+        return;
+    }
+
+    const timestamp = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 19);
+    const filename = `devshell-terminal-${termId}-${timestamp}.txt`;
+    const blob = new Blob([text], { type: 'text/plain;charset=utf-8' });
+    const url = URL.createObjectURL(blob);
+    const anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = filename;
+    document.body.appendChild(anchor);
+    anchor.click();
+    anchor.remove();
+    URL.revokeObjectURL(url);
+    notify(`Log downloaded as "${filename}".`, 'success');
+}
+
+/**
+ * Toggles auto-scroll on/off for the active terminal.
+ * Updates the button appearance to reflect current state.
+ */
+function toggleAutoScroll() {
+    const termId = state.activeTerminalId;
+    // Default is true; flip it
+    state.autoScroll[termId] = state.autoScroll[termId] === false ? true : false;
+    const isOn = state.autoScroll[termId] !== false;
+    updateAutoScrollBtn(termId, isOn);
+    notify(`Auto-scroll ${isOn ? 'enabled' : 'disabled'} for Terminal ${termId}.`, 'info');
+}
+
+/**
+ * Updates the auto-scroll button's visual state for the given terminal.
+ */
+function updateAutoScrollBtn(termId, isOn) {
+    const btn = document.getElementById('btn-autoscroll');
+    if (!btn) return;
+    btn.classList.toggle('active', isOn);
+    btn.title = isOn ? 'Auto-scroll: On' : 'Auto-scroll: Off';
+    btn.setAttribute('aria-pressed', String(isOn));
+}
+
 // ─── Terminal Tabs ───
 
 function addTerminal() {
     const id = state.nextTerminalId++;
     state.terminals.push(id);
+    state.autoScroll[id] = true; // auto-scroll on by default for new terminals
 
     const tabsContainer = document.getElementById('cli-tabs');
     const tabBtn = document.createElement('div');
@@ -744,6 +853,9 @@ function switchTerminal(id) {
     const activeBody = document.getElementById(`terminal-body-${id}`) || (id === 1 ? document.getElementById('terminal-body') : null);
     if (activeBody) activeBody.style.display = 'block';
 
+    // Sync auto-scroll button to the newly active terminal's state
+    updateAutoScrollBtn(id, state.autoScroll[id] !== false);
+
     highlightTerminalSearch();
 }
 
@@ -751,6 +863,8 @@ function closeTerminal(id) {
     if (state.terminals.length <= 1) return;
 
     state.terminals = state.terminals.filter(t => t !== id);
+    delete state.autoScroll[id];
+
     const tabBtn = document.getElementById(`tab-btn-${id}`) || document.querySelector(`.cli-tab[data-id="${id}"]`);
     if (tabBtn) tabBtn.remove();
 
@@ -1132,6 +1246,24 @@ function bindEvents() {
     const firstTab = document.querySelector('.cli-tab[data-id="1"]');
     if (firstTab) {
         firstTab.addEventListener('click', () => switchTerminal(1));
+    }
+
+    // Terminal utility action buttons
+    const btnCopyOutput = document.getElementById('btn-copy-output');
+    if (btnCopyOutput) {
+        btnCopyOutput.addEventListener('click', copyTerminalOutput);
+    }
+
+    const btnDownloadLog = document.getElementById('btn-download-log');
+    if (btnDownloadLog) {
+        btnDownloadLog.addEventListener('click', downloadTerminalLog);
+    }
+
+    const btnAutoscroll = document.getElementById('btn-autoscroll');
+    if (btnAutoscroll) {
+        btnAutoscroll.addEventListener('click', toggleAutoScroll);
+        // Set initial visual state (auto-scroll on by default)
+        updateAutoScrollBtn(state.activeTerminalId, true);
     }
 
     // Search
@@ -1525,6 +1657,7 @@ const DebuggerConsole = (() => {
         { cmd: 'state.terminals', desc: 'List active terminal IDs', icon: 'debug', category: 'debug' },
         { cmd: 'state.cmdHistory', desc: 'View command history', icon: 'debug', category: 'debug' },
         { cmd: 'state.expandedCategories', desc: 'View expanded categories', icon: 'debug', category: 'debug' },
+        { cmd: 'state.autoScroll', desc: 'View auto-scroll state per terminal', icon: 'debug', category: 'debug' },
         { cmd: 'Object.keys(state.scripts)', desc: 'List script categories', icon: 'debug', category: 'debug' },
         { cmd: 'JSON.stringify(state, null, 2)', desc: 'Pretty print full state', icon: 'debug', category: 'debug' },
         { cmd: 'document.title', desc: 'Get page title', icon: 'cmd', category: 'js' },
@@ -1532,6 +1665,9 @@ const DebuggerConsole = (() => {
         { cmd: 'navigator.userAgent', desc: 'Get browser user agent', icon: 'cmd', category: 'js' },
         { cmd: 'performance.now()', desc: 'Get high-res timestamp', icon: 'cmd', category: 'js' },
         { cmd: 'loadScripts()', desc: 'Reload scripts from server', icon: 'script', category: 'debug' },
+        { cmd: 'copyTerminalOutput()', desc: 'Copy active terminal output to clipboard', icon: 'cmd', category: 'debug' },
+        { cmd: 'downloadTerminalLog()', desc: 'Download active terminal log as .txt', icon: 'cmd', category: 'debug' },
+        { cmd: 'toggleAutoScroll()', desc: 'Toggle auto-scroll for active terminal', icon: 'cmd', category: 'debug' },
     ];
 
     function getTime() {
