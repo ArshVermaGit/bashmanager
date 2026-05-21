@@ -1779,6 +1779,36 @@ function bindEvents() {
     if (cliSearchInput) {
         cliSearchInput.addEventListener('input', () => highlightTerminalSearch());
     }
+    const themeToggleBtn = document.getElementById('theme-toggle-btn');
+    const moonIcon = document.getElementById('theme-icon-moon');
+    const sunIcon = document.getElementById('theme-icon-sun');
+    
+    if (themeToggleBtn) {
+        // Read local cache profile preference on load
+        const savedTheme = localStorage.getItem('theme') || 'dark';
+        
+        if (savedTheme === 'light') {
+            document.body.classList.add('light-theme');
+            if (moonIcon) moonIcon.style.display = 'none';
+            if (sunIcon) sunIcon.style.display = 'block';
+        }
+
+        themeToggleBtn.addEventListener('click', () => {
+            const isCurrentlyLight = document.body.classList.contains('light-theme');
+            
+            if (isCurrentlyLight) {
+                document.body.classList.remove('light-theme');
+                localStorage.setItem('theme', 'dark');
+                if (moonIcon) moonIcon.style.display = 'block';
+                if (sunIcon) sunIcon.style.display = 'none';
+            } else {
+                document.body.classList.add('light-theme');
+                localStorage.setItem('theme', 'light');
+                if (moonIcon) moonIcon.style.display = 'none';
+                if (sunIcon) sunIcon.style.display = 'block';
+            }
+        });
+    }
 
     // Terminal Tabs
     const btnAddTab = document.getElementById('btn-add-tab');
