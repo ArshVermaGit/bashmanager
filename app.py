@@ -627,6 +627,24 @@ def clear_command_history():
         }), 500
 
 
+@app.route('/api/history/clear', methods=['POST'])
+def clear_history():
+    try:
+        with open(HISTORY_FILE, 'w', encoding='utf-8') as f:
+            pass
+        with open(FAILED_HISTORY_FILE, 'w', encoding='utf-8') as f:
+            pass
+        return jsonify({
+            'success': True,
+            'message': 'Execution history cleared successfully'
+        })
+    except Exception as e:
+        return jsonify({
+            'success': False,
+            'error': str(e)
+        }), 500
+
+
 @app.route('/api/history/analytics')
 def history_analytics():
     entries = _load_history_entries(limit=1000)
