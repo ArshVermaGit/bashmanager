@@ -1338,7 +1338,7 @@ function generateUUID() {
 }
 
 
-let saveSessionTimeout = null;
+// let saveSessionTimeout = null;
 
 function saveSessionDebounced() {
     if (saveSessionTimeout) {
@@ -1563,7 +1563,13 @@ function updateAutoScrollBtn(termId, isOn) {
     btn.classList.toggle('active', isOn);
     btn.title = isOn ? 'Auto-scroll: On' : 'Auto-scroll: Off';
     btn.setAttribute('aria-pressed', String(isOn));
-    termBody.scrollTop = termBody.scrollHeight;
+    const termBody =
+        document.getElementById(`terminal-body-${termId}`) ||
+        document.getElementById('terminal-body');
+
+    if (termBody) {
+        termBody.scrollTop = termBody.scrollHeight;
+    }    
     highlightTerminalSearch();
     persistWorkspace();
 }
