@@ -3453,8 +3453,13 @@ def import_github():
     if _parsed.scheme.lower() not in _ALLOWED_SCHEMES or _parsed.hostname not in _ALLOWED:
         return jsonify({'error': 'Only GitHub URLs are allowed', 'success': False}), 400
 
+    # Reconstruct the URL using only the validated components to prevent parser differentials
+    safe_url = f"{_parsed.scheme}://{_parsed.hostname}{_parsed.path}"
+    if _parsed.query:
+        safe_url += f"?{_parsed.query}"
+
     try:
-        req = urllib.request.Request(url, headers={'User-Agent': 'Mozilla/5.0 DevShell'})
+        req = urllib.request.Request(safe_url, headers={'User-Agent': 'Mozilla/5.0 DevShell'})
         opener = urllib.request.build_opener(BlockRedirectHandler)
 
         with opener.open(req, timeout=10) as response:
