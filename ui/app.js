@@ -3071,35 +3071,115 @@ function bindEvents() {
     if (cliSearchInput) {
         cliSearchInput.addEventListener('input', () => highlightTerminalSearch());
     }
+    function scoreMatch(query, candidate) {
+        const normalizedQuery = String(query || '').toLowerCase();
+        const normalizedCandidate = String(candidate || '').toLowerCase();
+
+        if (!normalizedQuery) return 0;
+        if (normalizedCandidate.startsWith(normalizedQuery)) return 2;
+        if (normalizedCandidate.includes(normalizedQuery)) return 1;
+        return 0;
+    }
+
+    function fuzzyMatch(query, str) {
+        const normalizedQuery = String(query || '').toLowerCase();
+        const normalizedStr = String(str || '').toLowerCase();
+
+        if (!normalizedQuery) return true;
+
+        let queryIndex = 0;
+        for (let strIndex = 0; strIndex < normalizedStr.length && queryIndex < normalizedQuery.length; strIndex++) {
+            if (normalizedStr[strIndex] === normalizedQuery[queryIndex]) {
+                queryIndex++;
+            }
+        }
+
+        return queryIndex === normalizedQuery.length;
+    }
+
     // Real-Time Sidebar Script Filter Logic (Fixed Variant)
     const scriptSearchBar = document.getElementById('script-search-bar');
     if (scriptSearchBar) {
         scriptSearchBar.addEventListener('input', (e) => {
             const filterText = e.target.value.toLowerCase().trim();
-            const scriptItems = document.querySelectorAll('#category-tree .script-item');
-            
+            const categoryLists = document.querySelectorAll('#category-tree .script-list');
+            const categoryContainers = Array.from(document.querySelectorAll('#category-tree > .category-header'));
+
+            if (filterText === '') {
+                const scriptItems = document.querySelectorAll('#category-tree .script-item');
+                scriptItems.forEach(item => {
+                    item.style.display = 'flex';
+                    item.removeAttribute('data-score');
+                });
+
+                categoryLists.forEach(list => {
+                    list.style.maxHeight = '';
+                });
+
+                categoryContainers.forEach(container => {
+                    container.style.display = '';
+                });
+
+                return;
+            }
+
+            const scriptItems = Array.from(document.querySelectorAll('#category-tree .script-item'));
+            const visibleByParent = new Map();
+            const bestScoreByParent = new Map();
+
             scriptItems.forEach(item => {
                 const scriptNameEl = item.querySelector('.script-item-name');
                 if (!scriptNameEl) return;
-                
+
                 const scriptName = scriptNameEl.textContent.toLowerCase();
-                
-                if (scriptName.includes(filterText)) {
-                    item.style.display = 'flex';
-                } else {
+
+                if (!fuzzyMatch(filterText, scriptName)) {
                     item.style.display = 'none';
+                    item.removeAttribute('data-score');
+                    return;
                 }
+
+                const score = scoreMatch(filterText, scriptName);
+                item.dataset.score = String(score);
+                item.style.display = 'flex';
+
+                const parent = item.parentElement;
+                if (!visibleByParent.has(parent)) {
+                    visibleByParent.set(parent, []);
+                }
+                visibleByParent.get(parent).push(item);
+                bestScoreByParent.set(parent, Math.max(bestScoreByParent.get(parent) ?? -1, score));
             });
 
+            visibleByParent.forEach((items, parent) => {
+                items.sort((a, b) => Number(b.dataset.score || 0) - Number(a.dataset.score || 0));
+                items.forEach(item => parent.appendChild(item));
+            });
+
+            categoryContainers.forEach(container => {
+                const list = container.querySelector('.script-list');
+                const hasVisibleItems = list && visibleByParent.has(list);
+                container.style.display = hasVisibleItems ? '' : 'none';
+            });
+
+            const rankedCategories = categoryContainers
+                .map(container => {
+                    const list = container.querySelector('.script-list');
+                    return {
+                        container,
+                        score: list ? (bestScoreByParent.get(list) ?? -1) : -1
+                    };
+                })
+                .filter(entry => entry.score >= 0)
+                .sort((a, b) => b.score - a.score);
+
+            const tree = document.getElementById('category-tree');
+            rankedCategories.forEach(({ container }) => tree.appendChild(container));
+
             // Handle category auto-expansion smoothly without resetting terminal CSS
-            const categoryLists = document.querySelectorAll('#category-tree .script-list');
             categoryLists.forEach(list => {
-                if (filterText !== '') {
-                    list.style.maxHeight = 'none';
-                    list.classList.remove('collapsed');
-                } else {
-                    list.style.maxHeight = '';
-                }
+                list.style.maxHeight = 'none';
+                list.classList.remove('collapsed');
             });
         });
     }
