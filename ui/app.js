@@ -24,12 +24,14 @@ const API = {
     reliability_trends: '/api/reliability/trends',
     reliability_recommendations: '/api/reliability/recommendations',
     reliability_diagnostics: '/api/reliability/diagnostics',
+    master_status: '/api/master/status',
 };
 
 // ─── State ────────────────────────────────────────────────
 let state = {
     scripts: {},
     activeScript: null,
+    lockTarget: null,
     expandedCategories: new Set(),
     expandedRoot: true,
     searchQuery: '',
@@ -37,6 +39,7 @@ let state = {
     cmdHistoryIndex: -1,
     historyQuery: '',
     historyFilter: 'all',
+    masterPassword: null,
     historyEntries: [],
     historySummary: {
         total: 0,
@@ -134,6 +137,70 @@ const ICONS = {
 function getCategoryIcon(name) {
     return ICONS[name.toLowerCase()] || ICONS.default;
 }
+
+// ─── Global Fetch Wrapper ──────────────────────────────────────────
+const originalFetch = window.fetch;
+window.fetch = async function(...args) {
+    let [resource, config] = args;
+    config = config || {};
+    
+    if (typeof resource === 'string' && resource.startsWith('/api/') && state.masterPassword) {
+        config.headers = config.headers || {};
+        config.headers['X-Master-Password'] = state.masterPassword;
+    }
+    
+    let res = await originalFetch(resource, config);
+    
+    if (res.status === 401) {
+        try {
+            const clone = res.clone();
+            const data = await clone.json();
+            if (data.master_locked) {
+                return new Promise((resolve, reject) => {
+                    const modal = document.getElementById('master-auth-modal');
+                    const input = document.getElementById('master-auth-password');
+                    const submit = document.getElementById('master-auth-submit');
+                    
+                    if (!modal) return resolve(res);
+                    
+                    modal.classList.add('active');
+                    input.value = '';
+                    input.focus();
+                    
+                    const cleanup = () => {
+                        submit.removeEventListener('click', onSubmit);
+                        input.removeEventListener('keydown', onKey);
+                    };
+
+                    const onSubmit = async () => {
+                        const pwd = input.value;
+                        if (!pwd) return;
+                        
+                        state.masterPassword = pwd;
+                        modal.classList.remove('active');
+                        cleanup();
+                        
+                        try {
+                            const retryRes = await window.fetch(resource, config);
+                            resolve(retryRes);
+                        } catch (e) {
+                            reject(e);
+                        }
+                    };
+                    
+                    const onKey = (e) => { if (e.key === 'Enter') onSubmit(); };
+                    
+                    submit.addEventListener('click', onSubmit);
+                    input.addEventListener('keydown', onKey);
+                });
+            }
+        } catch (e) {
+            console.error(e);
+        }
+    }
+    
+    return res;
+};
 
 // Register global lifecycle cleanup listeners exactly once
 if (!window.__devshell_lifecycle_registered) {
@@ -3541,38 +3608,55 @@ function bindEvents() {
 
     // Lock Features
     const btnLock = document.getElementById('btn-lock');
+    const btnMasterLock = document.getElementById('btn-master-lock');
     const lockOverlay = document.getElementById('lock-modal-overlay');
+
+    function openLockModal(targetPath, isLocked) {
+        state.lockTarget = targetPath;
+        const modalHeader = document.querySelector('#lock-modal h2');
+        const currentPassGroup = document.getElementById('lock-current-pass-group');
+        const newPassGroup = document.getElementById('lock-new-pass').parentElement;
+
+        if (isLocked) {
+            modalHeader.textContent = targetPath === '__master__' ? 'Remove Master Lock' : 'Remove Script Lock';
+            currentPassGroup.style.display = 'flex';
+            currentPassGroup.querySelector('label').textContent = 'Enter Password to Remove Lock';
+            newPassGroup.style.display = 'none';
+        } else {
+            modalHeader.textContent = targetPath === '__master__' ? 'Set Master Lock' : 'Lock Script';
+            currentPassGroup.style.display = 'none';
+            newPassGroup.style.display = 'flex';
+            newPassGroup.querySelector('label').textContent = 'Set Password';
+        }
+
+        document.getElementById('lock-current-pass').value = '';
+        document.getElementById('lock-new-pass').value = '';
+
+        lockOverlay.classList.add('active');
+    }
+
+    if (btnMasterLock && lockOverlay) {
+        btnMasterLock.addEventListener('click', async () => {
+            try {
+                const res = await originalFetch(API.master_status);
+                const data = await res.json();
+                openLockModal('__master__', data.locked);
+            } catch (err) {
+                console.error('Failed to check master lock status', err);
+            }
+        });
+    }
+
     if (btnLock && lockOverlay) {
         btnLock.addEventListener('click', () => {
             if (!state.activeScript) return;
-
-            // Check if it's already locked from state
+            
             let isLocked = false;
             for (let cat in state.scripts) {
                 let sc = state.scripts[cat].find(s => s.relative_path === state.activeScript);
                 if (sc && sc.locked) isLocked = true;
             }
-
-            const modalHeader = document.querySelector('#lock-modal h2');
-            const currentPassGroup = document.getElementById('lock-current-pass-group');
-            const newPassGroup = document.getElementById('lock-new-pass').parentElement;
-
-            if (isLocked) {
-                modalHeader.textContent = 'Remove Script Lock';
-                currentPassGroup.style.display = 'flex';
-                currentPassGroup.querySelector('label').textContent = 'Enter Password to Remove Lock';
-                newPassGroup.style.display = 'none';
-            } else {
-                modalHeader.textContent = 'Lock Script';
-                currentPassGroup.style.display = 'none';
-                newPassGroup.style.display = 'flex';
-                newPassGroup.querySelector('label').textContent = 'Set Password';
-            }
-
-            document.getElementById('lock-current-pass').value = '';
-            document.getElementById('lock-new-pass').value = '';
-
-            lockOverlay.classList.add('active');
+            openLockModal(state.activeScript, isLocked);
         });
 
         const closeLock = () => lockOverlay.classList.remove('active');
@@ -3601,10 +3685,20 @@ function bindEvents() {
             ?.addEventListener('click', restartReplay);
 
         document.getElementById('lock-modal-save').addEventListener('click', async () => {
+            if (!state.lockTarget) return;
+
             let isLocked = false;
-            for (let cat in state.scripts) {
-                let sc = state.scripts[cat].find(s => s.relative_path === state.activeScript);
-                if (sc && sc.locked) isLocked = true;
+            if (state.lockTarget === '__master__') {
+                try {
+                    const res = await originalFetch(API.master_status);
+                    const data = await res.json();
+                    isLocked = data.locked;
+                } catch (e) { console.error(e); }
+            } else {
+                for (let cat in state.scripts) {
+                    let sc = state.scripts[cat].find(s => s.relative_path === state.lockTarget);
+                    if (sc && sc.locked) isLocked = true;
+                }
             }
 
             let oldPass = '', newPass = '';
@@ -3619,20 +3713,29 @@ function bindEvents() {
                 }
             }
 
-            const success = await manageLock(state.activeScript, oldPass, newPass);
+            // Using originalFetch implicitly by calling manageLock which uses the wrapper... 
+            // Wait, manageLock uses fetch which will inject X-Master-Password. 
+            // This is perfectly fine since state.masterPassword is set during authentication!
+            const success = await manageLock(state.lockTarget, oldPass, newPass);
             if (success) {
+                const targetName = state.lockTarget === '__master__' ? 'Master' : 'Script';
                 notify(
                     isLocked
-                        ? 'Script lock removed successfully.'
-                        : 'Script locked successfully.',
+                        ? `${targetName} lock removed successfully.`
+                        : `${targetName} locked successfully.`,
                     'success'
                 );
-                if (!isLocked && newPass) {
-                    clearScriptUnlock(state.activeScript);
-                    selectScript(state.activeScript);
-                } else if (isLocked && !newPass) {
-                    clearScriptUnlock(state.activeScript);
-                    selectScript(state.activeScript);
+                
+                if (state.lockTarget === '__master__') {
+                    state.masterPassword = newPass || null;
+                } else {
+                    if (!isLocked && newPass) {
+                        clearScriptUnlock(state.lockTarget);
+                        selectScript(state.lockTarget);
+                    } else if (isLocked && !newPass) {
+                        clearScriptUnlock(state.lockTarget);
+                        selectScript(state.lockTarget);
+                    }
                 }
                 closeLock();
             }
